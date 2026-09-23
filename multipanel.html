@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-Panel Layout</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/svg2pdf.js/2.2.3/svg2pdf.umd.min.js"></script>
+<style>
+  :root{--ink:#1c2330;--line:#d8dee8;--panel:#fbfcfe;--accent:#2f5fd6;--muted:#69728a;--bg:#eef1f6;}
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);
+       display:flex;flex-direction:column;height:100vh;overflow:hidden;font-size:13px;}
+  #nav{flex:0 0 auto;display:flex;gap:16px;align-items:center;padding:8px 16px;background:#1c2330;color:#fff;font-size:12px;}
+  #nav a{color:#cdd6ea;text-decoration:none;} #nav a.active{color:#fff;font-weight:700;}
+  #main{flex:1;display:flex;overflow:hidden;}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:16px 0 8px;}
+  h2:first-child{margin-top:0;}
+  #panel{width:370px;flex:0 0 370px;background:var(--panel);border-right:1px solid var(--line);padding:16px;overflow-y:auto;}
+  #canvasWrap{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto;}
+  label{display:block;font-size:11px;color:var(--muted);margin:6px 0 3px;}
+  input,select,textarea{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px;background:#fff;color:var(--ink);font-family:inherit;}
+  .row{display:flex;gap:8px;} .row>div{flex:1;}
+  button{width:100%;padding:8px;border:none;border-radius:6px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;cursor:pointer;margin-top:8px;}
+  button.secondary{background:#3a4256;} button.ghost{background:#fff;color:var(--accent);border:1px solid var(--accent);}
+  .box{border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:10px;background:#fff;}
+  .check{display:flex;align-items:center;gap:6px;margin:6px 0;} .check input{width:auto;}
+  .tabs{display:flex;gap:4px;margin-bottom:10px;} .tabs button{margin:0;background:#e4e8ef;color:var(--ink);}
+  .tabs button.active{background:var(--accent);color:#fff;}
+  .item{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin-top:6px;font-size:11px;background:#fff;}
+  .item .txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .item .del{cursor:pointer;color:#c0392b;font-weight:700;}
+  #svgHost{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;}
+  #svgHost svg{max-width:100%;height:auto;}
+  .palette{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin-top:4px;}
+  .sw{aspect-ratio:1;border-radius:3px;font-size:8px;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;border:2px solid transparent;text-shadow:0 0 2px rgba(0,0,0,.7);}
+  .sw.sel{border-color:#1c2330;}
+  .palNum{display:flex;gap:6px;align-items:center;margin-top:4px;} .palNum input{width:60px;} .palNum span{font-size:10px;color:var(--muted);}
+  .hint{font-size:10px;color:var(--muted);margin-top:4px;}
+  .subh{font-size:11px;font-weight:700;margin-top:10px;color:var(--ink);}
+  .plotEntry{border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:8px;background:#fff;}
+</style>
+</head>
+<body>
+<div id="nav"><span style="font-weight:700">Figure Tools</span><a href="index.html">Home</a><a href="timeline.html">Timeline Diagram</a><a href="domains.html">Protein Domain Map</a><a href="plots.html">Analysis Plots</a><a href="multipanel.html" class="active">Multi-Panel Layout</a></div>
+<div id="main">
+<div id="panel">
+  <div class="tabs">
+    <button id="tabGrid" class="active" onclick="switchMode('grid')">Violin + Density Grid</button>
+    <button id="tabStack" onclick="switchMode('stack')">Line Stack</button>
+  </div>
+
+  <div id="gridUI">
+    <h2>Datasets (one file = one column)</h2>
+    <div class="hint">Each file: columns = groups, first row = group names. Files are placed left \u2192 right; every 3 files start a new violin+density row-pair.</div>
+    <input type="file" id="gridFiles" accept=".csv,.tsv,.txt,.xlsx,.xls" multiple>
+    <button class="ghost" onclick="loadGridSample()">Load 3-Panel Sample</button>
+    <div id="gridDatasetList"></div>
+
+    <h2>Page Size</h2>
+    <div class="box">
+      <div class="row"><div><label>Width</label><input id="gPageW" type="number" value="21" step="0.1"></div>
+        <div><label>Height</label><input id="gPageH" type="number" value="29.7" step="0.1"></div>
+        <div><label>Unit</label><select id="gUnit"><option value="cm">cm</option><option value="in">in</option><option value="mm">mm</option></select></div></div>
+      <button class="ghost" onclick="$('gPageW').value=21;$('gPageH').value=29.7;$('gUnit').value='cm';render()">Use A4 Portrait</button>
+    </div>
+
+    <h2>Style</h2>
+    <div class="box">
+      <div class="row"><div><label>Y Ticks (violin)</label><input id="gYTicksV" type="number" value="5"></div>
+        <div><label>Ticks (density)</label><input id="gTicksD" type="number" value="4"></div></div>
+      <div class="check"><input id="gLabelsOn" type="checkbox" checked><label style="margin:0">Panel labels (A, B, C\u2026)</label></div>
+      <div class="check"><input id="gVlOn" type="checkbox" checked><label style="margin:0">Show violin legend (25\u201375%, IQR, Mean) once</label></div>
+    </div>
+    <div class="box" id="gFontTick"></div>
+    <div class="box" id="gFontTitle"></div>
+
+    <button class="secondary" onclick="exportGridSVG()">Export as SVG</button>
+    <button class="secondary" onclick="exportGridPDF()">Export as Vector PDF</button>
+  </div>
+
+  <div id="stackUI" style="display:none">
+    <div class="check"><input id="sameFormat" type="checkbox" checked onchange="renderStackUI()"><label style="margin:0">Same formatting for all plots</label></div>
+    <div id="sharedCfgBox"></div>
+    <h2>Line Plots (stacked top \u2192 bottom)</h2>
+    <button class="ghost" onclick="addLinePlot()">+ Add Line Plot</button>
+    <div id="stackList"></div>
+    <h2>Page Width</h2>
+    <div class="box"><div class="row"><div><input id="sPageW" type="number" value="18" step="0.1"></div>
+      <div><select id="sUnit"><option value="cm">cm</option><option value="in">in</option><option value="mm">mm</option></select></div></div></div>
+    <button class="secondary" onclick="exportStackSVG()">Export as SVG</button>
+    <button class="secondary" onclick="exportStackPDF()">Export as Vector PDF</button>
+  </div>
+</div>
+<div id="canvasWrap"><div id="svgHost"></div></div>
+</div>
+<script src="shared.js"></script>
+<script>
+function $(id){return document.getElementById(id);}
+let mode='grid';
+function switchMode(m){ mode=m; $('tabGrid').classList.toggle('active',m==='grid'); $('tabStack').classList.toggle('active',m==='stack');
+  $('gridUI').style.display=m==='grid'?'block':'none'; $('stackUI').style.display=m==='stack'?'block':'none'; render(); }
+
+/* ---------- GRID (Violin + Density) ---------- */
+let datasets=[]; // {name, headers, cols, colorIdxs}
+let gTickPal, gTitlePal;
+$('gFontTick').innerHTML = fontRoleHTML('gtick','Axis Tick Numbers');
+$('gFontTitle').innerHTML = fontRoleHTML('gtitle','Axis Titles');
+function initGridRoles(){ gTickPal=initFontRole('gtick',render); gTitlePal=initFontRole('gtitle',render); }
+['gPageW','gPageH','gUnit','gYTicksV','gTicksD','gLabelsOn','gVlOn'].forEach(id=> { $(id).addEventListener('input',render); $(id).addEventListener('change',render); });
+
+$('gridFiles').addEventListener('change', e=>{
+  [...e.target.files].forEach(f=>{
+    loadFile(f, csv=>{
+      const t=parseDelimited(csv);
+      datasets.push({name:f.name.replace(/\.[^.]+$/,''), headers:t.headers, cols:t.cols});
+      renderDatasetList(); render();
+    });
+  });
+});
+function removeDataset(i){ datasets.splice(i,1); renderDatasetList(); render(); }
+function renderDatasetList(){
+  const c=$('gridDatasetList'); c.innerHTML='';
+  datasets.forEach((d,i)=>{
+    const div=document.createElement('div'); div.className='item';
+    div.innerHTML=`<div class="txt">${i+1}. ${d.name} (${d.headers.length} groups)</div><div class="del" onclick="removeDataset(${i})">\u2715</div>`;
+    c.appendChild(div);
+  });
+}
+function randn(){ let u=0,v=0; while(u===0)u=Math.random(); while(v===0)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function loadGridSample(){
+  datasets=[];
+  const names=['RMSD','Rg','SASA'], base=[[2.8,0.35],[15.8,0.25],[8000,180]];
+  names.forEach((nm,ni)=>{
+    const heads=['Wild','T46I','P56H','P56S'], n=150;
+    const cols=heads.map((h,gi)=>Array.from({length:n},()=> base[ni][0]+(gi*0.03*base[ni][0]*0.02)+base[ni][1]*randn()));
+    datasets.push({name:nm, headers:heads, cols});
+  });
+  renderDatasetList(); render();
+}
+function groupColor(gi){ return PALETTE[((gi*9+13)%40)]; }
+
+function panelViolin(dataset,x,y,w,h,fontA,fontB,tickCol,titleCol,ticksN,label){
+  const ml=x+42,mr=x+w-8,mt=y+18,mb=y+h-30, drawW=mr-ml, drawH=mb-mt;
+  const groups=dataset.headers.map((hd,gi)=>({label:hd,color:groupColor(gi),data:dataset.cols[gi]||[]})).filter(g=>g.data.length>1);
+  if(!groups.length) return '';
+  const all=groups.flatMap(g=>g.data); const pad=(Math.max(...all)-Math.min(...all))*0.15||1;
+  const yMin=Math.min(...all)-pad, yMax=Math.max(...all)+pad;
+  const yS=v=> mt+drawH-(v-yMin)/(yMax-yMin)*drawH;
+  const slotW=drawW/groups.length;
+  let s=`<rect x="${ml}" y="${mt}" width="${drawW}" height="${drawH}" fill="none" stroke="#222" stroke-width="1.1"/>`;
+  if(label) s+=`<text x="${x+2}" y="${y+14}" font-size="16" font-weight="800">${label}</text>`;
+  linTicks(yMin,yMax,ticksN).forEach(t=>{
+    const ty=yS(t);
+    s+=`<line x1="${ml-3}" y1="${ty}" x2="${ml}" y2="${ty}" stroke="#222"/>`;
+    s+=`<text x="${ml-7}" y="${ty+3.5}" text-anchor="end" ${fontA} fill="${tickCol}">${t}</text>`;
+  });
+  groups.forEach((g,i)=>{
+    const cx=ml+slotW*(i+0.5);
+    const bw=silvermanBW(g.data)||1;
+    const pts=Array.from({length:30},(_,k)=>yMin+k*(yMax-yMin)/29);
+    const dens=gaussianKDE(g.data,pts,bw); const maxD=Math.max(...dens)||1;
+    const hw=dens.map(d=> d/maxD*slotW*0.4);
+    let d=''; pts.forEach((p,k)=>{d+=(k===0?'M':'L')+(cx-hw[k])+' '+yS(p)+' ';});
+    for(let k=pts.length-1;k>=0;k--) d+='L'+(cx+hw[k])+' '+yS(pts[k])+' '; d+='Z';
+    s+=`<path d="${d}" fill="${g.color}" fill-opacity="0.55" stroke="${g.color}" stroke-width="1.2"/>`;
+    const st=quartileStats(g.data);
+    s+=`<line x1="${cx}" y1="${yS(st.loW)}" x2="${cx}" y2="${yS(st.hiW)}" stroke="#111" stroke-width="1.4"/>`;
+    s+=`<rect x="${cx-4}" y="${yS(st.q3)}" width="8" height="${yS(st.q1)-yS(st.q3)}" fill="#111"/>`;
+    s+=`<rect x="${cx-2}" y="${yS(st.mean)-2}" width="4" height="4" fill="#e53935"/>`;
+    s+=`<text x="${cx}" y="${mb+16}" text-anchor="middle" font-size="${fontB.match(/font-size="(\d+)/)[1]}" font-weight="700" fill="${g.color}" font-family="${(fontB.match(/font-family="([^"]+)/)||[])[1]||'Arial'}">${escXml(g.label)}</text>`;
+  });
+  return s;
+}
+function panelDensity(dataset,x,y,w,h,fontA,tickCol,ticksN){
+  const ml=x+42,mr=x+w-8,mt=y+22,mb=y+h-24, drawW=mr-ml, drawH=mb-mt;
+  const groups=dataset.headers.map((hd,gi)=>({label:hd,color:groupColor(gi),data:dataset.cols[gi]||[]})).filter(g=>g.data.length>1);
+  if(!groups.length) return '';
+  const all=groups.flatMap(g=>g.data);
+  const xMin=Math.min(...all), xMax=Math.max(...all), bins=16, binW=(xMax-xMin)/bins;
+  const hists=groups.map(g=>{ const c=new Array(bins).fill(0); g.data.forEach(v=>{let b=Math.floor((v-xMin)/binW); if(b>=bins)b=bins-1; if(b<0)b=0; c[b]++;}); return c.map(v=>v/(g.data.length*binW)); });
+  const yMax=Math.max(...hists.flat())*1.1||1;
+  const xS=v=> ml+(v-xMin)/(xMax-xMin)*drawW, yS=v=> mt+drawH-(v/yMax)*drawH;
+  let s=`<rect x="${ml}" y="${mt}" width="${drawW}" height="${drawH}" fill="none" stroke="#222" stroke-width="1.1"/>`;
+  linTicks(xMin,xMax,ticksN).forEach(t=>{ const tx=xS(t); s+=`<line x1="${tx}" y1="${mt+drawH}" x2="${tx}" y2="${mt+drawH+3}" stroke="#222"/><text x="${tx}" y="${mt+drawH+14}" text-anchor="middle" ${fontA} fill="${tickCol}">${t}</text>`; });
+  linTicks(0,yMax,ticksN).forEach(t=>{ const ty=yS(t); s+=`<line x1="${ml-3}" y1="${ty}" x2="${ml}" y2="${ty}" stroke="#222"/><text x="${ml-7}" y="${ty+3.5}" text-anchor="end" ${fontA} fill="${tickCol}">${t}</text>`; });
+  groups.forEach((g,gi)=>{
+    let d='M'+xS(xMin)+' '+yS(0)+' ';
+    hists[gi].forEach((h,b)=>{ const x1=xS(xMin+b*binW), x2=xS(xMin+(b+1)*binW); d+=`L${x1} ${yS(h)} L${x2} ${yS(h)} `; });
+    d+='L'+xS(xMax)+' '+yS(0);
+    s+=`<path d="${d}" fill="${g.color}" fill-opacity="0.15" stroke="${g.color}" stroke-width="1.4"/>`;
+  });
+  return s;
+}
+function buildGridSVG(){
+  if(!gTickPal) initGridRoles();
+  const W=physicalToPx($('gPageW').value,$('gUnit').value)||800, H=physicalToPx($('gPageH').value,$('gUnit').value)||1100;
+  let svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#fff"/>`;
+  if(!datasets.length){ svg+='</svg>'; return svg; }
+  const cols=Math.min(datasets.length,3), triplets=Math.ceil(datasets.length/3), rows=triplets*2;
+  const marginOuter=20, cellW=(W-marginOuter*2)/cols, cellH=(H-marginOuter*2)/rows;
+  const fontA=roleFontAttrs('gtick'), fontB=roleFontAttrs('gtitle'), tickCol=roleColor('gtick',gTickPal,'#333'), titleCol=roleColor('gtitle',gTitlePal,'#1c2330');
+  const ticksV=parseInt($('gYTicksV').value)||5, ticksD=parseInt($('gTicksD').value)||4;
+  const labels='ABCDEFGHIJKLMNOP';
+  datasets.forEach((ds,i)=>{
+    const tripletIdx=Math.floor(i/3), colIdx=i%3;
+    const vRow=tripletIdx*2, dRow=tripletIdx*2+1;
+    const x=marginOuter+colIdx*cellW, yV=marginOuter+vRow*cellH, yD=marginOuter+dRow*cellH;
+    svg+=panelViolin(ds,x,yV,cellW,cellH,fontA,fontB,tickCol,titleCol,ticksV, $('gLabelsOn').checked?labels[i]:null);
+    svg+=panelDensity(ds,x,yD,cellW,cellH,fontA,tickCol,ticksD);
+  });
+  if($('gVlOn').checked){
+    const items=[{type:'box',color:'#111',label:'25%~75%',font:fontA,textColor:tickCol},
+                 {type:'line',color:'#111',label:'Range within 1.5 IQR',font:fontA,textColor:tickCol},
+                 {type:'dot',color:'#e53935',label:'Mean',font:fontA,textColor:tickCol}];
+    svg+=drawLegend(items,{position:'top-right',layout:'vertical',gap:4,ml:marginOuter+(cols-1)*cellW,mr:marginOuter,mt:marginOuter,mb:marginOuter,W,H});
+  }
+  svg+='</svg>'; return svg;
+}
+function exportGridSVG(){ const div=document.createElement('div'); div.innerHTML=buildGridSVG(); downloadSVG(div.querySelector('svg'),'grid-figure.svg'); }
+function exportGridPDF(){
+  const div=document.createElement('div'); div.innerHTML=buildGridSVG(); const svgEl=div.querySelector('svg');
+  document.body.appendChild(div); div.style.position='fixed'; div.style.left='-9999px';
+  const wIn = $('gUnit').value==='in'?parseFloat($('gPageW').value): $('gUnit').value==='cm'?parseFloat($('gPageW').value)/2.54:parseFloat($('gPageW').value)/25.4;
+  const hIn = $('gUnit').value==='in'?parseFloat($('gPageH').value): $('gUnit').value==='cm'?parseFloat($('gPageH').value)/2.54:parseFloat($('gPageH').value)/25.4;
+  exportVectorPDF(svgEl,wIn,hIn,'grid-figure.pdf').then(()=>document.body.removeChild(div));
+}
+
+/* ---------- LINE STACK ---------- */
+let linePlots=[]; // {table, regions, cfg:{xStart,xEnd,xTicks,yStart,yEnd,yTicks,height}}
+function defaultCfg(){ return {xStart:'',xEnd:'',xTicks:6,yStart:'',yEnd:'',yTicks:6,height:4}; }
+$('sharedCfgBox').innerHTML = cfgFormHTML('shared');
+function cfgFormHTML(id){
+  return `<div class="box"><div class="row"><div><label>X Start</label><input id="${id}XStart"></div><div><label>X End</label><input id="${id}XEnd"></div><div><label>X Ticks</label><input id="${id}XTicks" type="number" value="6"></div></div>
+  <div class="row" style="margin-top:6px"><div><label>Y Start</label><input id="${id}YStart"></div><div><label>Y End</label><input id="${id}YEnd"></div><div><label>Y Ticks</label><input id="${id}YTicks" type="number" value="6"></div></div>
+  <label>Plot Height (cm)</label><input id="${id}Height" type="number" value="4" step="0.1"></div>`;
+}
+document.addEventListener('input', e=>{ if(e.target.id && e.target.id.startsWith('shared')) render(); });
+function addLinePlot(){
+  linePlots.push({name:'Plot '+(linePlots.length+1), table:{headers:[],cols:[]}, regions:[], cfg:defaultCfg()});
+  renderStackUI(); render();
+}
+function removeLinePlot(i){ linePlots.splice(i,1); renderStackUI(); render(); }
+function renderStackUI(){
+  const c=$('stackList'); c.innerHTML='';
+  const same=$('sameFormat').checked;
+  linePlots.forEach((lp,i)=>{
+    const div=document.createElement('div'); div.className='plotEntry';
+    div.innerHTML=`<div class="row"><div><b>${lp.name}</b></div><div style="text-align:right"><span class="del" onclick="removeLinePlot(${i})" style="cursor:pointer;color:#c0392b">Remove \u2715</span></div></div>
+      <label>Data (col1=X, rest=series)</label><textarea style="height:60px" onchange="linePlots[${i}].table=parseDelimited(this.value);render()">${''}</textarea>
+      <input type="file" accept=".csv,.tsv,.xlsx,.xls" onchange="loadFile(this.files[0], csv=>{linePlots[${i}].table=parseDelimited(csv); render();})">
+      ${same?'' : cfgFormHTML('lp'+i)}`;
+    c.appendChild(div);
+    if(!same){
+      const cfg=lp.cfg;
+      ['XStart','XEnd','XTicks','YStart','YEnd','YTicks','Height'].forEach(k=>{
+        const el=document.getElementById('lp'+i+k); if(el){ el.value=cfg[k.charAt(0).toLowerCase()+k.slice(1)]; el.addEventListener('input',()=>{ cfg[k.charAt(0).toLowerCase()+k.slice(1)]=el.value; render(); }); }
+      });
+    }
+  });
+}
+function getCfg(i){
+  if($('sameFormat').checked){
+    return {xStart:$('sharedXStart').value,xEnd:$('sharedXEnd').value,xTicks:$('sharedXTicks').value,
+            yStart:$('sharedYStart').value,yEnd:$('sharedYEnd').value,yTicks:$('sharedYTicks').value,height:$('sharedHeight').value};
+  }
+  return linePlots[i].cfg;
+}
+function panelLine(lp,cfg,x,y,w,h){
+  const ml=x+55,mr=x+w-15,mt=y+10,mb=y+h-30, drawW=mr-ml, drawH=mb-mt;
+  const xs=lp.table.cols[0]||[]; const series=lp.table.headers.slice(1).map((hd,gi)=>({label:hd,color:groupColor(gi),data:lp.table.cols[gi+1]||[]})).filter(s=>s.data.length>1);
+  if(!xs.length||!series.length) return '';
+  const xMin=cfg.xStart!==''&&cfg.xStart!==undefined?parseFloat(cfg.xStart):Math.min(...xs);
+  const xMax=cfg.xEnd!==''&&cfg.xEnd!==undefined?parseFloat(cfg.xEnd):Math.max(...xs);
+  const allY=series.flatMap(s=>s.data);
+  const yMin=cfg.yStart!==''&&cfg.yStart!==undefined?parseFloat(cfg.yStart):Math.min(...allY);
+  const yMax=cfg.yEnd!==''&&cfg.yEnd!==undefined?parseFloat(cfg.yEnd):Math.max(...allY)*1.15;
+  const xS=v=> ml+(v-xMin)/(xMax-xMin)*drawW, yS=v=> mt+drawH-(v-yMin)/(yMax-yMin)*drawH;
+  let s='';
+  (lp.regions||[]).forEach(r=>{ const rx=xS(Math.max(r.start,xMin)), rw=xS(Math.min(r.end,xMax))-rx; if(rw>0) s+=`<rect x="${rx}" y="${mt}" width="${rw}" height="${drawH}" fill="${r.color}" fill-opacity="0.3"/>`; });
+  s+=`<rect x="${ml}" y="${mt}" width="${drawW}" height="${drawH}" fill="none" stroke="#222" stroke-width="1.1"/>`;
+  linTicks(xMin,xMax,parseInt(cfg.xTicks)||6).forEach(t=>{ const tx=xS(t); s+=`<line x1="${tx}" y1="${mt+drawH}" x2="${tx}" y2="${mt+drawH+3}" stroke="#222"/><text x="${tx}" y="${mt+drawH+16}" text-anchor="middle" font-size="11">${t}</text>`; });
+  linTicks(yMin,yMax,parseInt(cfg.yTicks)||6).forEach(t=>{ const ty=yS(t); s+=`<line x1="${ml-3}" y1="${ty}" x2="${ml}" y2="${ty}" stroke="#222"/><text x="${ml-7}" y="${ty+3.5}" text-anchor="end" font-size="11">${t}</text>`; });
+  series.forEach(sr=>{ let d=''; xs.forEach((xv,i)=>{ if(sr.data[i]!==undefined) d+=(d===''?'M':'L')+xS(xv)+' '+yS(sr.data[i])+' '; }); s+=`<path d="${d}" fill="none" stroke="${sr.color}" stroke-width="2"/>`; });
+  let lx=ml+8, ly=mt+14;
+  series.forEach(sr=>{ s+=`<line x1="${lx}" y1="${ly}" x2="${lx+14}" y2="${ly}" stroke="${sr.color}" stroke-width="2"/><text x="${lx+18}" y="${ly+4}" font-size="11">${escXml(sr.label)}</text>`; lx+=24+sr.label.length*6.5+14; });
+  return s;
+}
+function buildStackSVG(){
+  const wIn0 = $('sUnit').value==='in'?parseFloat($('sPageW').value): $('sUnit').value==='cm'?parseFloat($('sPageW').value)/2.54:parseFloat($('sPageW').value)/25.4;
+  const W=wIn0*96;
+  let totalH=0; const heights=linePlots.map((lp,i)=>{ const cfg=getCfg(i); const hCm=parseFloat(cfg.height)||4; const hPx=physicalToPx(hCm,'cm'); totalH+=hPx; return hPx; });
+  const H=Math.max(totalH,100);
+  let svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#fff"/>`;
+  let y=0;
+  linePlots.forEach((lp,i)=>{ const cfg=getCfg(i); svg+=panelLine(lp,cfg,0,y,W,heights[i]); y+=heights[i]; });
+  svg+='</svg>'; return svg;
+}
+function exportStackSVG(){ const div=document.createElement('div'); div.innerHTML=buildStackSVG(); downloadSVG(div.querySelector('svg'),'line-stack.svg'); }
+function exportStackPDF(){
+  const div=document.createElement('div'); div.innerHTML=buildStackSVG(); const svgEl=div.querySelector('svg');
+  const wIn = $('sUnit').value==='in'?parseFloat($('sPageW').value): $('sUnit').value==='cm'?parseFloat($('sPageW').value)/2.54:parseFloat($('sPageW').value)/25.4;
+  const hIn = wIn * (parseFloat(svgEl.getAttribute('height'))/parseFloat(svgEl.getAttribute('width')));
+  exportVectorPDF(svgEl,wIn,hIn,'line-stack.pdf');
+}
+
+function render(){
+  if(mode==='grid'){ $('svgHost').innerHTML = buildGridSVG(); }
+  else { $('svgHost').innerHTML = buildStackSVG(); }
+}
+loadGridSample();
+render();
+</script>
+</body>
+</html>
